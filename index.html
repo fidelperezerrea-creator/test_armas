@@ -246,6 +246,22 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 700; margin: 
   padding:6px; font-size:13.5px; cursor:pointer; font-family:inherit;
 }
 
+.paywall-wrap { min-height: 90vh; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding: 30px 24px; }
+.paywall-crest { width: 72px; height: 72px; border-radius: 22px; background: var(--green); display:flex; align-items:center; justify-content:center; margin-bottom: 22px; }
+.paywall-crest svg { width: 40px; height: 40px; color: var(--paper); }
+.paywall-wrap h1 { font-size: 24px; margin-bottom: 10px; color: var(--green-deep); }
+.paywall-wrap p { font-size: 14.5px; color: #5b5b52; line-height: 1.55; max-width: 36ch; margin: 0 0 24px; }
+.paywall-price { font-family:'Fraunces',serif; font-size: 34px; font-weight:700; color: var(--green-deep); margin-bottom: 4px; }
+.paywall-price-note { font-size: 12.5px; color: #776f5f; margin-bottom: 26px; }
+.paywall-wrap .primary-btn { max-width: 320px; margin-bottom: 12px; }
+.paywall-restore { background:none; border:none; color:#776f5f; font-size: 13px; cursor:pointer; font-family:inherit; text-decoration: underline; }
+.trial-banner {
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  background: var(--paper-2); border:1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 18px; font-size: 13px;
+}
+.trial-banner button { background: var(--green); color: var(--paper); border:none; border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight:600; cursor:pointer; font-family:inherit; flex:none; }
+
 .streak-badge {
   display:flex; align-items:center; gap:8px; background: var(--paper-2); border:1px solid var(--line);
   border-radius: 999px; padding: 8px 16px; font-size: 13.5px; font-weight: 600; color: var(--green-deep);
@@ -297,6 +313,54 @@ for (const q of QUESTIONS) {
 
 let state = { view: 'home' };
 const BATCH_SIZE = 5;
+const TRIAL_DAYS = 7;
+const TRIAL_KEY = 'gc_trial_start_v1';
+const PURCHASED_KEY = 'gc_purchased_v1';
+const PRICE_LABEL = '4,99 €'; // de referencia; el precio real lo fija Play Console
+
+function getTrialStart() {
+  try {
+    let v = localStorage.getItem(TRIAL_KEY);
+    if (!v) { v = String(Date.now()); localStorage.setItem(TRIAL_KEY, v); }
+    return Number(v);
+  } catch (e) { return Date.now(); }
+}
+function isPurchased() {
+  try { return localStorage.getItem(PURCHASED_KEY) === '1'; } catch (e) { return false; }
+}
+function trialDaysLeft() {
+  const elapsed = Date.now() - getTrialStart();
+  return Math.max(0, TRIAL_DAYS - Math.floor(elapsed / 86400000));
+}
+function trialExpired() {
+  return trialDaysLeft() <= 0 && !isPurchased();
+}
+
+// --- Conexión con la compra real (Google Play Billing) ---
+// Placeholder: en esta fase, el plugin nativo todavía no está conectado.
+// Cuando se integre, esta función llamará al plugin de Capacitor/Billing
+// y, si la compra se confirma, hará: localStorage.setItem(PURCHASED_KEY, '1').
+function attemptPurchase() {
+  if (window.CapacitorBilling && window.CapacitorBilling.purchase) {
+    window.CapacitorBilling.purchase().then(ok => {
+      if (ok) { localStorage.setItem(PURCHASED_KEY, '1'); render(); }
+    });
+  } else {
+    state.purchaseNotice = 'La compra todavía no está conectada en esta versión de prueba. Se activará en la próxima actualización.';
+    render();
+  }
+}
+function attemptRestore() {
+  if (window.CapacitorBilling && window.CapacitorBilling.restore) {
+    window.CapacitorBilling.restore().then(ok => {
+      if (ok) { localStorage.setItem(PURCHASED_KEY, '1'); render(); }
+      else { state.purchaseNotice = 'No se ha encontrado ninguna compra anterior para esta cuenta.'; render(); }
+    });
+  } else {
+    state.purchaseNotice = 'La restauración de compras todavía no está conectada en esta versión de prueba.';
+    render();
+  }
+}
 const HISTORY_KEY = 'gc_test_history_v1';
 const QTIME_KEY = 'gc_question_times_v1';
 const QSTATUS_KEY = 'gc_question_status_v1';
@@ -682,6 +746,7 @@ function esc(s) {
 
 function render() {
   const app = document.getElementById('app');
+  if (trialExpired()) return renderPaywall(app);
   if (state.view === 'home') return renderHome(app);
   if (state.view === 'count') return renderCount(app);
   if (state.view === 'quiz') return renderQuiz(app);
@@ -726,6 +791,12 @@ function renderHome(app) {
       </div>
     </div>
     <p class="subtitle">Cuestionario oficial de 423 preguntas de la Guardia Civil, organizado por los 7 temas del programa. Practica tema a tema o simula el examen real de 20 preguntas.</p>
+
+    ${!isPurchased() ? `
+    <div class="trial-banner">
+      <span>🔓 Prueba gratis: quedan <strong>${trialDaysLeft()}</strong> día${trialDaysLeft() === 1 ? '' : 's'}</span>
+      <button onclick="attemptPurchase()">Comprar</button>
+    </div>` : ''}
 
     ${streak > 0 ? `<div class="streak-badge">🔥 ${streak} día${streak === 1 ? '' : 's'} seguido${streak === 1 ? '' : 's'} practicando</div>` : ''}
 
@@ -1150,13 +1221,48 @@ function renderPractical(app) {
   `;
 }
 
+function renderPaywall(app) {
+  app.innerHTML = `
+    <div class="paywall-wrap">
+      <div class="paywall-crest">
+        <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+          <g fill="currentColor" stroke="none">
+            <rect x="8" y="20" width="34" height="4.4" rx="1.5"/>
+            <rect x="12" y="16.2" width="24" height="2.6" rx="1"/>
+            <path d="M15 21.5 C15 23 13.6 24.1 12.2 24.7 C7.9 26.5 4.3 29.4 2.1 33.4 C1.4 34.7 2.9 36 4.1 35.1 C7.9 32.4 12.1 30.4 16 29.4 L16 21.5 C16 20.7 15.4 20.3 15 21.5 Z"/>
+          </g>
+          <path d="M14 26.5 C11.5 27.6 10 29.7 10.2 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1>Tu prueba gratuita ha terminado</h1>
+      <p>Has tenido 7 días completos para practicar con las 423 preguntas, el histórico y todas las herramientas de repaso. Desbloquea el acceso completo con un pago único, sin suscripción.</p>
+      <div class="paywall-price">${PRICE_LABEL}</div>
+      <div class="paywall-price-note">Pago único · acceso de por vida</div>
+      <button class="primary-btn" onclick="attemptPurchase()">Comprar versión completa</button>
+      <button class="paywall-restore" onclick="attemptRestore()">Ya compré, restaurar</button>
+      ${state.purchaseNotice ? `<p style="margin-top:20px; font-size:12.5px; color:var(--bad);">${esc(state.purchaseNotice)}</p>` : ''}
+    </div>
+  `;
+}
+
 render();
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  });
+// --- Botón atrás físico de Android (Capacitor) ---
+function handleHardwareBack() {
+  const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (state.confirmExit) { cancelExit(); return; }
+  if (state.confirmClear) { cancelClearHistory(); return; }
+  if (trialExpired()) { if (CapApp) CapApp.exitApp(); return; }
+  if (state.view === 'home') { if (CapApp) CapApp.exitApp(); return; }
+  if (state.view === 'quiz') { requestExit(); return; }
+  goHome();
 }
+(function () {
+  const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (CapApp && CapApp.addListener) {
+    CapApp.addListener('backButton', handleHardwareBack);
+  }
+})();
 </script>
 </body>
 </html>
