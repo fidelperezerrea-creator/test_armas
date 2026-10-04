@@ -246,7 +246,7 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 700; margin: 
   padding:6px; font-size:13.5px; cursor:pointer; font-family:inherit;
 }
 
-.paywall-wrap { min-height: 90vh; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding: 30px 24px; }
+.paywall-wrap { position: relative; min-height: 90vh; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding: 30px 24px; }
 .paywall-crest { width: 72px; height: 72px; border-radius: 22px; background: var(--green); display:flex; align-items:center; justify-content:center; margin-bottom: 22px; }
 .paywall-crest svg { width: 40px; height: 40px; color: var(--paper); }
 .paywall-wrap h1 { font-size: 24px; margin-bottom: 10px; color: var(--green-deep); }
@@ -255,11 +255,16 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 700; margin: 
 .paywall-price-note { font-size: 12.5px; color: #776f5f; margin-bottom: 26px; }
 .paywall-wrap .primary-btn { max-width: 320px; margin-bottom: 12px; }
 .paywall-restore { background:none; border:none; color:#776f5f; font-size: 13px; cursor:pointer; font-family:inherit; text-decoration: underline; }
+.onboard-skip { position: absolute; top: calc(18px + env(safe-area-inset-top, 0px)); right: 18px; background:none; border:none; color:#776f5f; font-size: 13.5px; cursor:pointer; font-family:inherit; }
+.onboard-dots { display:flex; gap: 7px; margin-bottom: 26px; }
+.onboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.onboard-dot.active { background: var(--green); width: 20px; border-radius: 4px; }
 .trial-banner {
-  display:flex; justify-content:space-between; align-items:center; gap:10px;
   background: var(--paper-2); border:1px solid var(--line); border-radius: var(--radius);
   padding: 12px 16px; margin-bottom: 18px; font-size: 13px;
 }
+.trial-row { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.trial-row + .trial-row { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
 .trial-banner button { background: var(--green); color: var(--paper); border:none; border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight:600; cursor:pointer; font-family:inherit; flex:none; }
 
 .streak-badge {
@@ -311,12 +316,35 @@ for (const q of QUESTIONS) {
   QMAP[q.tema + '-' + q.num] = q;
 }
 
-let state = { view: 'home' };
+const LAUNCH_KEY = 'gc_launch_count_v1';
+function getLaunchCount() {
+  try {
+    const n = parseInt(localStorage.getItem(LAUNCH_KEY) || '0', 10) + 1;
+    localStorage.setItem(LAUNCH_KEY, String(n));
+    return n;
+  } catch (e) { return 99; }
+}
+const LAUNCH_COUNT = getLaunchCount();
+
+const ONBOARD_SLIDES = [
+  {
+    icon: '🎯',
+    title: 'Simulacros y tests por tema',
+    text: 'Haz el simulacro de examen oficial (20 preguntas, con la proporción real por tema) o practica tema a tema, eligiendo cuántas preguntas quieres repasar cada vez.'
+  },
+  {
+    icon: '📊',
+    title: 'Histórico y repaso personalizado',
+    text: 'Cada test queda guardado en tu histórico, con estadísticas por día y por tema. Además, la app te arma repasos automáticos con las preguntas que más fallas y las que más te cuesta responder.'
+  }
+];
+
+let state = (LAUNCH_COUNT <= 2) ? { view: 'onboarding', slide: 0 } : { view: 'home' };
 const BATCH_SIZE = 5;
 const TRIAL_DAYS = 7;
 const TRIAL_KEY = 'gc_trial_start_v1';
 const PURCHASED_KEY = 'gc_purchased_v1';
-const PRICE_LABEL = '4,99 €'; // de referencia; el precio real lo fija Play Console
+const PRICE_LABEL = '3,99 €'; // de referencia; el precio real lo fija Play Console
 
 function getTrialStart() {
   try {
@@ -569,6 +597,51 @@ function startTimer() {
   }, 1000);
 }
 
+function normalizeText(s) {
+  return (s || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    const ca = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Busca `query` (ya normalizada, sin acentos y en minúsculas) dentro de `text`,
+// tolerando acentos (vía normalizeText) y un error de una letra en alguna
+// palabra (inserción/borrado/sustitución). Compara por palabras completas
+// en vez de deslizar letra a letra: igual de tolerante, mucho más rápido.
+function fuzzyContains(text, query) {
+  if (!query) return true;
+  const hay = normalizeText(text);
+  if (hay.includes(query)) return true;
+  if (query.length < 4) return false; // evita falsos positivos con palabras muy cortas
+  const words = hay.split(/[^a-z0-9]+/);
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
+    if (!w || Math.abs(w.length - query.length) > 1) continue;
+    if (levenshtein(w, query) <= 1) return true;
+  }
+  return false;
+}
+
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -756,7 +829,11 @@ function render() {
   if (state.view === 'theory') return renderTheory(app);
   if (state.view === 'book') return renderBook(app);
   if (state.view === 'practical') return renderPractical(app);
+  if (state.view === 'onboarding') return renderOnboarding(app);
 }
+
+function onboardNext() { state.slide = 1; render(); }
+function onboardFinish() { goHome(); }
 
 function renderHome(app) {
   const failedCount = failedQuestionsCount();
@@ -794,8 +871,13 @@ function renderHome(app) {
 
     ${!isPurchased() ? `
     <div class="trial-banner">
-      <span>🔓 Prueba gratis: quedan <strong>${trialDaysLeft()}</strong> día${trialDaysLeft() === 1 ? '' : 's'}</span>
-      <button onclick="attemptPurchase()">Comprar</button>
+      <div class="trial-row">
+        <span>🔓 Prueba gratis: quedan <strong>${trialDaysLeft()}</strong> día${trialDaysLeft() === 1 ? '' : 's'}</span>
+      </div>
+      <div class="trial-row">
+        <span>Acceso ilimitado — <strong>${PRICE_LABEL}</strong></span>
+        <button onclick="attemptPurchase()">Comprar</button>
+      </div>
     </div>` : ''}
 
     ${streak > 0 ? `<div class="streak-badge">🔥 ${streak} día${streak === 1 ? '' : 's'} seguido${streak === 1 ? '' : 's'} practicando</div>` : ''}
@@ -834,6 +916,17 @@ function renderHome(app) {
     <button class="hist-btn" onclick="goTheory()">🔧 Teoría: partes del arma</button>
     <button class="hist-btn" onclick="goBook()">📖 Modo consulta (índice)</button>
     <button class="hist-btn" onclick="goPractical()">🎯 Examen práctico</button>
+    ${state.confirmAppExit ? `
+    <div class="exit-overlay" onclick="if(event.target===this) cancelAppExit()">
+      <div class="exit-modal">
+        <h3>¿Salir de la app?</h3>
+        <p>Tu progreso e histórico ya están guardados en el dispositivo, no se pierde nada.</p>
+        <div class="btn-col">
+          <button class="discard-btn" onclick="doAppExit()">Salir</button>
+          <button class="cancel-btn" onclick="cancelAppExit()">Cancelar</button>
+        </div>
+      </div>
+    </div>` : ''}
   `;
 }
 
@@ -1152,15 +1245,15 @@ function renderTheory(app) {
 }
 
 function renderBook(app) {
-  const q = (state.search || '').trim().toLowerCase();
+  const q = normalizeText((state.search || '').trim());
   let body = '';
 
   if (q) {
     const matches = QUESTIONS.filter(item =>
-      item.question.toLowerCase().includes(q) ||
-      item.options.A.toLowerCase().includes(q) ||
-      item.options.B.toLowerCase().includes(q) ||
-      item.options.C.toLowerCase().includes(q)
+      fuzzyContains(item.question, q) ||
+      fuzzyContains(item.options.A, q) ||
+      fuzzyContains(item.options.B, q) ||
+      fuzzyContains(item.options.C, q)
     );
     if (matches.length === 0) {
       body = `<p class="empty-hist">Sin resultados para "${esc(state.search)}".</p>`;
@@ -1221,6 +1314,24 @@ function renderPractical(app) {
   `;
 }
 
+function renderOnboarding(app) {
+  const i = state.slide || 0;
+  const s = ONBOARD_SLIDES[i];
+  const dots = ONBOARD_SLIDES.map((_, j) => `<span class="onboard-dot ${j === i ? 'active' : ''}"></span>`).join('');
+  app.innerHTML = `
+    <div class="paywall-wrap">
+      <button class="onboard-skip" onclick="onboardFinish()">Omitir</button>
+      <div style="font-size:52px; margin-bottom:18px;">${s.icon}</div>
+      <h1>${esc(s.title)}</h1>
+      <p>${esc(s.text)}</p>
+      <div class="onboard-dots">${dots}</div>
+      ${i < ONBOARD_SLIDES.length - 1
+        ? `<button class="primary-btn" style="max-width:280px;" onclick="onboardNext()">Siguiente</button>`
+        : `<button class="primary-btn" style="max-width:280px;" onclick="onboardFinish()">Empezar</button>`}
+    </div>
+  `;
+}
+
 function renderPaywall(app) {
   app.innerHTML = `
     <div class="paywall-wrap">
@@ -1248,12 +1359,18 @@ function renderPaywall(app) {
 render();
 
 // --- Botón atrás físico de Android (Capacitor) ---
-function handleHardwareBack() {
+function requestAppExit() { state.confirmAppExit = true; render(); }
+function cancelAppExit() { state.confirmAppExit = false; render(); }
+function doAppExit() {
   const CapApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (CapApp) CapApp.exitApp();
+}
+function handleHardwareBack() {
+  if (state.confirmAppExit) { cancelAppExit(); return; }
   if (state.confirmExit) { cancelExit(); return; }
   if (state.confirmClear) { cancelClearHistory(); return; }
-  if (trialExpired()) { if (CapApp) CapApp.exitApp(); return; }
-  if (state.view === 'home') { if (CapApp) CapApp.exitApp(); return; }
+  if (trialExpired()) { doAppExit(); return; }
+  if (state.view === 'home') { requestAppExit(); return; }
   if (state.view === 'quiz') { requestExit(); return; }
   goHome();
 }
