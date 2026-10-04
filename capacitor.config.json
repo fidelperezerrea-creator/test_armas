@@ -1,0 +1,9 @@
+{
+  "appId": "com.fidelperez.testarmas",
+  "appName": "Test Licencia de Armas D/E/AEM",
+  "webDir": "www",
+  "backgroundColor": "#f4f2ec",
+  "android": {
+    "backgroundColor": "#f4f2ec"
+  }
+}
